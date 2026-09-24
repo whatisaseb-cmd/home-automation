@@ -1,0 +1,88 @@
+import ccxt
+import os
+import datetime
+import requests
+import pandas as pd
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# --- Configuration des montants ---
+MONTANT_BULL = 12  # Montant investi si le prix est au-dessus de la SMA 200
+MONTANT_BEAR = 6   # Montant investi si le prix est en dessous (Mettre 0 pour stopper l'achat)
+
+def envoyer_telegram(message):
+    token = os.getenv('TELEGRAM_TOKEN')
+    chat_id = os.getenv('TELEGRAM_CHAT_ID')
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    payload = {"chat_id": chat_id, "text": message, "parse_mode": "Markdown"}
+    try:
+        requests.post(url, json=payload)
+    except Exception as e:
+        print(f"Erreur Telegram : {e}")
+
+def analyser_tendance(kraken, symbole):
+    try:
+        # Récupération des 200 dernières bougies journalières
+        ohlcv = kraken.fetch_ohlcv(symbole, timeframe='1d', limit=200)
+        df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+        
+        sma_200 = df['close'].mean()
+        prix_actuel = df['close'].iloc[-1]
+        
+        est_haussier = prix_actuel > sma_200
+        tendance_txt = "HAUSSIÈRE 🚀" if est_haussier else "BAISSIÈRE 📉"
+        
+        return est_haussier, prix_actuel, sma_200, tendance_txt
+    except Exception as e:
+        print(f"Erreur lors de l'analyse : {e}")
+        return None, None, None, "ERREUR"
+
+def executer_achat_smart_dca():
+    symbole = 'BTC/EUR'
+    kraken = ccxt.kraken({
+        'apiKey': os.getenv('API_KEY'),
+        'secret': os.getenv('API_SECRET'),
+        'enableRateLimit': True,
+    })
+
+    maintenant = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    # 1. Analyse du marché
+    est_haussier, prix, sma, tendance = analyser_tendance(kraken, symbole)
+    
+    if est_haussier is None:
+        envoyer_telegram("❌ Impossible de récupérer la tendance. Achat annulé par sécurité.")
+        return
+
+    # 2. Décision du montant
+    montant_a_investir = MONTANT_BULL if est_haussier else MONTANT_BEAR
+    
+    if montant_a_investir <= 0:
+        msg = f"⏸ *DCA en pause*\nTendance : {tendance}\nPrix : {prix:.2f}€ | SMA200 : {sma:.2f}€\nAchat annulé car montant configuré à 0€."
+        print(msg)
+        envoyer_telegram(msg)
+        return
+
+    # 3. Exécution de l'achat
+    try:
+        volume_btc = montant_a_investir / prix
+        ordre = kraken.create_market_buy_order(symbole, volume_btc)
+        
+        msg_succes = (
+            f"🤖 *Smart DCA Exécuté*\n"
+            f"Tendance : {tendance}\n"
+            f"Achat : {volume_btc:.6f} BTC\n"
+            f"Prix : {prix:.2f} € | SMA200 : {sma:.2f} €\n"
+            f"Investi : {montant_a_investir} €"
+        )
+        print(msg_succes)
+        envoyer_telegram(msg_succes)
+        
+    except ccxt.InsufficientFunds:
+        envoyer_telegram(f"⚠️ *Fonds insuffisants* pour investir {montant_a_investir}€.")
+    except Exception as e:
+        envoyer_telegram(f"❌ *Erreur achat* : `{e}`")
+
+if __name__ == "__main__":
+    executer_achat_smart_dca()

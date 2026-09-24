@@ -1,0 +1,145 @@
+import os
+import csv
+import json
+import requests
+from datetime import datetime, timedelta
+
+# Configuration des chemins et de l'API
+CSV_CLEAN_PATH = "/home/seb/sonoff-energy/historique_linky.csv"
+CSV_BRUT_PATH = "/home/seb/sonoff-energy/historique_linky_brut.csv"
+
+API_TOKEN = "WvfMcQHAblnmPJo5UrKRK4pqUDyU97bbMuU_shrTiO8="
+PDL = "06307525305736"
+
+def load_existing_data(filepath):
+    """Charge les données existantes dans un dictionnaire {YYYY-MM-DD: kwh}."""
+    data = {}
+    if os.path.exists(filepath):
+        with open(filepath, 'r', encoding='utf-8') as f:
+            reader = csv.reader(f)
+            for row in reader:
+                if len(row) >= 2:
+                    date_str, val_str = row[0].strip(), row[1].strip()
+                    try:
+                        data[date_str] = float(val_str)
+                    except ValueError:
+                        continue
+    return data
+
+def process_brut_csv(filepath):
+    """Extrait les données d'un export brut Enedis (Format DD/MM/YYYY;valeur;)."""
+    brut_data = {}
+    if not os.path.exists(filepath):
+        return brut_data
+
+    with open(filepath, 'r', encoding='utf-8') as f:
+        for line in f:
+            parts = line.strip().split(';')
+            if len(parts) >= 2:
+                date_raw, val_raw = parts[0].strip(), parts[1].strip().replace(',', '.')
+                try:
+                    # Conversion de DD/MM/YYYY vers YYYY-MM-DD
+                    dt = datetime.strptime(date_raw, "%d/%m/%Y")
+                    date_iso = dt.strftime("%Y-%m-%d")
+                    val_kwh = float(val_raw)
+                    brut_data[date_iso] = val_kwh
+                except ValueError:
+                    continue
+    return brut_data
+
+def fetch_api_range(start_date, end_date):
+    """Interroge MyElectricalData pour une plage de dates donnée avec tentative sur le cache."""
+    headers = {"Authorization": API_TOKEN}
+    
+    # 1. Essai direct
+    url = f"https://www.myelectricaldata.fr/daily_consumption/{PDL}/start/{start_date}/end/{end_date}"
+    try:
+        res = requests.get(url, headers=headers, timeout=10)
+        if res.status_code == 200:
+            return parse_api_response(res.json())
+    except Exception as e:
+        print(f"⚠️ Erreur appel direct API: {e}")
+
+    # 2. Essai via le cache
+    url_cache = f"https://www.myelectricaldata.fr/daily_consumption/{PDL}/start/{start_date}/end/{end_date}/cache/"
+    try:
+        res = requests.get(url_cache, headers=headers, timeout=10)
+        if res.status_code == 200:
+            return parse_api_response(res.json())
+    except Exception as e:
+        print(f"⚠️ Erreur appel cache API: {e}")
+
+    return {}
+
+def parse_api_response(data):
+    """Parse le JSON renvoyé par l'API MyElectricalData."""
+    results = {}
+    if isinstance(data, list):
+        for item in data:
+            if 'date' in item and 'value' in item:
+                val = float(item['value']) / 1000.0 if float(item['value']) > 100 else float(item['value'])
+                results[item['date']] = round(val, 2)
+    elif isinstance(data, dict) and 'meter_reading' in data:
+        intervals = data['meter_reading'].get('interval_reading', [])
+        for item in intervals:
+            if 'date' in item and 'value' in item:
+                val = float(item['value']) / 1000.0 if float(item['value']) > 100 else float(item['value'])
+                results[item['date']] = round(val, 2)
+    return results
+
+def main():
+    print("🔄 Chargement de l'historique local...")
+    history = load_existing_data(CSV_CLEAN_PATH)
+    initial_count = len(history)
+    
+    if history:
+        last_date_str = max(history.keys())
+        print(f"📅 Dernière date enregistrée dans historique_linky.csv : {last_date_str}")
+    else:
+        last_date_str = "2023-01-01"
+        print("⚠️ Fichier d'historique vide ou inexistant.")
+
+    # 1. Vérification si un fichier brut a été déposé
+    print("🔍 Traitement du fichier brut 'historique_linky_brut.csv' s'il existe...")
+    brut_data = process_brut_csv(CSV_BRUT_PATH)
+    added_from_brut = 0
+    for d, val in brut_data.items():
+        if d not in history:
+            history[d] = val
+            added_from_brut += 1
+    if added_from_brut > 0:
+        print(f"✅ {added_from_brut} nouvelles journées ajoutées depuis le fichier brut !")
+
+    # 2. Tentative de combler le trou via l'API
+    last_dt = datetime.strptime(max(history.keys()), "%Y-%m-%d")
+    today = datetime.now()
+    
+    if (today - last_dt).days > 1:
+        start_str = (last_dt + timedelta(days=1)).strftime("%Y-%m-%d")
+        end_str = (today - timedelta(days=1)).strftime("%Y-%m-%d")
+        print(f"🌐 Interrogation API pour la période du {start_str} au {end_str}...")
+        
+        api_data = fetch_api_range(start_str, end_str)
+        added_from_api = 0
+        for d, val in api_data.items():
+            if d not in history:
+                history[d] = val
+                added_from_api += 1
+        
+        if added_from_api > 0:
+            print(f"✅ {added_from_api} nouvelles journées récupérées via l'API !")
+        else:
+            print("⚠️ L'API n'a pas renvoyé de données supplémentaires.")
+
+    # Sauvegarde triée par date
+    sorted_history = sorted(history.items(), key=lambda x: x[0])
+    with open(CSV_CLEAN_PATH, 'w', newline='', encoding='utf-8') as f:
+        writer = csv.writer(f)
+        for date_key, val in sorted_history:
+            writer.writerow([date_key, f"{val:.2f}"])
+
+    print(f"🎉 Mis à jour ! Total d'enregistrements : {len(sorted_history)} (+{len(sorted_history) - initial_count} ajouts).")
+    print(f"📁 Fichier sauvegardé : {CSV_CLEAN_PATH}")
+
+if __name__ == "__main__":
+    main()

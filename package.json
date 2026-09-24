@@ -1,0 +1,7 @@
+{
+  "dependencies": {
+    "axios": "^1.15.0",
+    "ewelink-api": "^3.1.1",
+    "ring-client-api": "^9.13.0"
+  }
+}
