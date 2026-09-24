@@ -14,7 +14,7 @@ jobs:
         python-version: ["3.9", "3.10", "3.11"]
 
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
 
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v4
@@ -27,18 +27,13 @@ jobs:
         pip install pytest pytest-cov pandas numpy yfinance requests ccxt
 
     - name: Run bot_dca tests
-      run: |
-        cd bot_kraken
-        pytest test_bot_dca.py -v --cov=bot_dca --cov-report=xml
+      run: pytest bot_kraken/test_bot_dca.py -v --cov=bot_kraken.bot_dca --cov-report=xml
 
     - name: Run update_linky tests
-      run: |
-        cd sonoff-energy
-        pytest test_update_linky_history.py -v --cov=update_linky_history --cov-report=xml
+      run: pytest sonoff-energy/test_update_linky_history.py -v --cov=sonoff-energy.update_linky_history --cov-report=xml
 
     - name: Run app tests
-      run: |
-        pytest test_app.py -v --cov=app --cov-report=xml
+      run: pytest test_app.py -v --cov=app --cov-report=xml
 
     - name: Run all tests with coverage
       run: |
@@ -62,7 +57,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
 
     - name: Set up Python
       uses: actions/setup-python@v4
