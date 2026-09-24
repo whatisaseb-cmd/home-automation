@@ -468,55 +468,6 @@ def index():
                 </div>
             </div>
 
-            <div class="section">
-                <div class="section-title">Derniers relevés</div>
-
-                <div class="recent-entries">
-                    <div class="recent-entries-title">
-                        🔥 Gaz
-                        <button class="download-btn" onclick="downloadCSV('gas')">📥 CSV</button>
-                    </div>
-                    <ul class="entry-list">
-    """
-
-    if last_gas:
-        for entry in last_gas:
-            html += f"""
-                        <li class="entry-item">
-                            <span class="entry-date">{entry['date']}</span>
-                            <span class="entry-value">{entry['val']:.2f} kWh • {entry['cost']:.2f}€</span>
-                        </li>
-            """
-    else:
-        html += '<li class="entry-item"><span style="color: #a1a1a6;">Aucun relevé</span></li>'
-
-    html += """
-                    </ul>
-                </div>
-
-                <div class="recent-entries">
-                    <div class="recent-entries-title">
-                        🔋 Voiture
-                        <button class="download-btn" onclick="downloadCSV('car')">📥 CSV</button>
-                    </div>
-                    <ul class="entry-list">
-    """
-
-    if last_car:
-        for entry in last_car:
-            html += f"""
-                        <li class="entry-item">
-                            <span class="entry-date">{entry['date']}</span>
-                            <span class="entry-value">{entry['val']:.2f} kWh • {entry['cost']:.2f}€</span>
-                        </li>
-            """
-    else:
-        html += '<li class="entry-item"><span style="color: #a1a1a6;">Aucun relevé</span></li>'
-
-    html += """
-                    </ul>
-                </div>
-            </div>
 
             <div class="section">
                 <div class="section-title">Ajouter des données</div>
@@ -530,6 +481,16 @@ def index():
                         <button type="submit">Ajouter</button>
                     </form>
                     <div class="tarif-info">Tarif: 0.11548 €/kWh</div>
+
+                    <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid #f0f0f0;">
+                        <div style="font-size: 13px; color: #86868b; margin-bottom: 8px; display: flex; justify-content: space-between;">
+                            <span>Derniers relevés</span>
+                            <button class="download-btn" onclick="downloadCSV('gas')">📥 CSV</button>
+                        </div>
+                        <ul class="entry-list">
+    """ + ("".join([f'<li class="entry-item"><span class="entry-date">{e["date"]}</span><span class="entry-value">{e["val"]:.2f} kWh</span></li>' for e in last_gas]) if last_gas else '<li class="entry-item"><span style="color: #a1a1a6;">Aucun relevé</span></li>') + """
+                        </ul>
+                    </div>
                 </div>
 
                 <div class="form-card">
@@ -541,6 +502,16 @@ def index():
                         <button type="submit">Ajouter</button>
                     </form>
                     <div class="tarif-info">Tarif: 0.1740 €/kWh (HC)</div>
+
+                    <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid #f0f0f0;">
+                        <div style="font-size: 13px; color: #86868b; margin-bottom: 8px; display: flex; justify-content: space-between;">
+                            <span>Derniers relevés</span>
+                            <button class="download-btn" onclick="downloadCSV('car')">📥 CSV</button>
+                        </div>
+                        <ul class="entry-list">
+    """ + ("".join([f'<li class="entry-item"><span class="entry-date">{e["date"]}</span><span class="entry-value">{e["val"]:.2f} kWh</span></li>' for e in last_car]) if last_car else '<li class="entry-item"><span style="color: #a1a1a6;">Aucun relevé</span></li>') + """
+                        </ul>
+                    </div>
                 </div>
             </div>
 
