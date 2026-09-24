@@ -14,10 +14,10 @@ jobs:
         python-version: ["3.9", "3.10", "3.11"]
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v4.2.1
 
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
         python-version: ${{ matrix.python-version }}
 
@@ -48,7 +48,7 @@ jobs:
         fail_ci_if_error: false
 
     - name: Archive coverage reports
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v4.5.0
       with:
         name: coverage-reports
         path: htmlcov/
@@ -57,10 +57,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v4.2.1
 
     - name: Set up Python
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
         python-version: "3.11"
 
