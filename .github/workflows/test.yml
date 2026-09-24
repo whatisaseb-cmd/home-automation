@@ -24,7 +24,7 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install pytest pytest-cov pandas numpy yfinance requests ccxt
+        pip install pytest pytest-cov pandas numpy yfinance requests ccxt python-dotenv
 
     - name: Run bot_dca tests
       run: pytest bot_kraken/test_bot_dca.py -v --cov=bot_kraken.bot_dca --cov-report=xml
