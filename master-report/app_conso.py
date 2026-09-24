@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
-Energy Consumption Dashboard - SQLite Version with Simple Forms & Charts
-Réglementé Engie tariffs auto-calculated
+Energy Consumption Dashboard - Apple Design + Mobile Responsive
 """
 
 import os
@@ -12,22 +11,13 @@ from flask import Flask, render_template_string, request, jsonify
 
 app = Flask(__name__)
 
-# Paths
 DB_PATH = os.path.expanduser('~/data/maison.db')
-LOGS_DIR = os.path.expanduser('~/logs')
-
-os.makedirs(LOGS_DIR, exist_ok=True)
-
-# Tarifs réglementés Engie (€/kWh)
 TARIFS = {
-    'linky_hc': 0.16039,  # Heures creuses
-    'linky_hp': 0.19209,  # Heures pleines
-    'gas': 0.11548,        # Gaz
-    'car': 0.20            # EV charging average
+    'gas': 0.11548,
+    'car': 0.20
 }
 
 def get_db_connection():
-    """Connect to SQLite database"""
     try:
         conn = sqlite3.connect(DB_PATH)
         conn.row_factory = sqlite3.Row
@@ -37,136 +27,94 @@ def get_db_connection():
         return None
 
 def load_linky_data(limit=365):
-    """Load electricity data from SQLite"""
     conn = get_db_connection()
     if not conn:
         return []
-
     try:
         cursor = conn.cursor()
         cursor.execute(f"SELECT date, kwh, cost FROM linky ORDER BY date DESC LIMIT {limit}")
-        rows = cursor.fetchall()
-        data = [{'date': row['date'], 'val': row['kwh'], 'cost': row['cost']} for row in rows]
+        data = [{'date': row['date'], 'val': row['kwh'], 'cost': row['cost']} for row in cursor.fetchall()]
         conn.close()
         return sorted(data, key=lambda x: x['date'])
-    except Exception as e:
-        print(f"❌ Error loading Linky: {e}")
+    except:
         conn.close()
         return []
 
 def load_gas_data(limit=365):
-    """Load gas data from SQLite"""
     conn = get_db_connection()
     if not conn:
         return []
-
     try:
         cursor = conn.cursor()
         cursor.execute(f"SELECT date, kwh, cost FROM gas ORDER BY date DESC LIMIT {limit}")
-        rows = cursor.fetchall()
-        data = [{'date': row['date'], 'val': row['kwh'], 'cost': row['cost']} for row in rows]
+        data = [{'date': row['date'], 'val': row['kwh'], 'cost': row['cost']} for row in cursor.fetchall()]
         conn.close()
         return sorted(data, key=lambda x: x['date'])
-    except Exception as e:
-        print(f"❌ Error loading Gas: {e}")
+    except:
         conn.close()
         return []
 
 def load_car_data(limit=365):
-    """Load EV charging data from SQLite"""
     conn = get_db_connection()
     if not conn:
         return []
-
     try:
         cursor = conn.cursor()
         cursor.execute(f"SELECT date, kwh, cost FROM car ORDER BY date DESC LIMIT {limit}")
-        rows = cursor.fetchall()
-        data = [{'date': row['date'], 'val': row['kwh'], 'cost': row['cost']} for row in rows]
+        data = [{'date': row['date'], 'val': row['kwh'], 'cost': row['cost']} for row in cursor.fetchall()]
         conn.close()
         return sorted(data, key=lambda x: x['date'])
-    except Exception as e:
-        print(f"❌ Error loading Car: {e}")
+    except:
         conn.close()
         return []
 
 def insert_manual_entry(table, date_str, kwh):
-    """Insert or update manual entry in SQLite with auto-calculated cost"""
     conn = get_db_connection()
     if not conn:
         return False
-
     try:
         cursor = conn.cursor()
-
-        # Auto-calculate cost based on tarif
-        if table == 'gas':
-            cost = float(kwh) * TARIFS['gas']
-        elif table == 'car':
-            cost = float(kwh) * TARIFS['car']
-        else:  # linky
-            cost = float(kwh) * TARIFS['linky_hc']
-
-        # Insert or replace
-        cursor.execute(f"""
-            INSERT OR REPLACE INTO {table} (date, kwh, cost)
-            VALUES (?, ?, ?)
-        """, (date_str, float(kwh), round(cost, 4)))
-
+        cost = float(kwh) * TARIFS.get(table, 0.20)
+        cursor.execute(f"INSERT OR REPLACE INTO {table} (date, kwh, cost) VALUES (?, ?, ?)",
+                      (date_str, float(kwh), round(cost, 4)))
         conn.commit()
         conn.close()
         return True
-    except Exception as e:
-        print(f"❌ Error inserting entry: {e}")
+    except:
         if conn:
             conn.close()
         return False
 
 def get_monthly_data(table):
-    """Get data grouped by month (all years)"""
     conn = get_db_connection()
     if not conn:
         return {}
-
     try:
         cursor = conn.cursor()
         cursor.execute(f"""
-            SELECT
-                strftime('%Y', date) as year,
-                strftime('%m', date) as month,
-                SUM(kwh) as total_kwh
+            SELECT strftime('%Y', date) as year, strftime('%m', date) as month, SUM(kwh) as total_kwh
             FROM {table}
             GROUP BY year, month
             ORDER BY year DESC, month
         """)
-
-        rows = cursor.fetchall()
-        conn.close()
-
-        # Organize by year
         years = {}
-        for row in rows:
-            year = row['year']
-            month = row['month']
+        for row in cursor.fetchall():
+            year, month = row['year'], row['month']
             if year not in years:
                 years[year] = {}
             years[year][month] = float(row['total_kwh']) if row['total_kwh'] else 0
-
+        conn.close()
         return years
-    except Exception as e:
-        print(f"❌ Error getting monthly data: {e}")
-        if conn:
-            conn.close()
+    except:
+        conn.close()
         return {}
 
 @app.route('/')
 def index():
-    """Main dashboard page"""
     linky_data = load_linky_data()
     gas_data = load_gas_data()
     car_data = load_car_data()
 
-    # Calculate stats
     linky_total = sum(d['val'] for d in linky_data) if linky_data else 0
     linky_cost = sum(d['cost'] for d in linky_data) if linky_data else 0
     gas_total = sum(d['val'] for d in gas_data) if gas_data else 0
@@ -174,7 +122,6 @@ def index():
     car_total = sum(d['val'] for d in car_data) if car_data else 0
     car_cost = sum(d['cost'] for d in car_data) if car_data else 0
 
-    # Get monthly data for charts
     linky_months = get_monthly_data('linky')
     gas_months = get_monthly_data('gas')
     car_months = get_monthly_data('car')
@@ -184,275 +131,402 @@ def index():
     <html lang="fr">
     <head>
         <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Consommation Maison</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+        <title>Consommation</title>
         <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
         <style>
-            * { margin: 0; padding: 0; box-sizing: border-box; }
+            * {
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+                -webkit-tap-highlight-color: transparent;
+            }
+
+            html, body {
+                height: 100%;
+                width: 100%;
+            }
+
             body {
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                min-height: 100vh;
-                padding: 20px;
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', sans-serif;
+                background: #f5f5f7;
+                color: #1d1d1f;
+                font-size: 16px;
+                line-height: 1.6;
+                -webkit-font-smoothing: antialiased;
+                -webkit-text-size-adjust: 100%;
             }
+
             .container {
-                max-width: 1400px;
+                max-width: 1000px;
                 margin: 0 auto;
+                padding: 0 16px;
             }
+
             .header {
+                padding: 32px 0 20px;
                 text-align: center;
-                color: white;
-                margin-bottom: 30px;
             }
+
             .header h1 {
-                font-size: 2.5em;
-                margin-bottom: 10px;
+                font-size: 32px;
+                font-weight: 700;
+                letter-spacing: -0.5px;
+                margin-bottom: 8px;
             }
-            .grid {
+
+            .header p {
+                font-size: 15px;
+                color: #86868b;
+                font-weight: 400;
+            }
+
+            .stats-grid {
                 display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-                gap: 20px;
-                margin-bottom: 30px;
+                grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+                gap: 12px;
+                margin-bottom: 24px;
             }
-            .card {
+
+            .stat-card {
                 background: white;
                 border-radius: 12px;
-                padding: 25px;
-                box-shadow: 0 8px 32px rgba(0,0,0,0.1);
+                padding: 20px;
+                box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+                transition: all 0.3s ease;
             }
-            .card-title {
-                font-size: 1.3em;
+
+            .stat-card:hover {
+                box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+                transform: translateY(-2px);
+            }
+
+            .stat-card-title {
+                font-size: 14px;
+                color: #86868b;
+                font-weight: 500;
+                margin-bottom: 12px;
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+            }
+
+            .stat-card-value {
+                font-size: 28px;
                 font-weight: 600;
-                margin-bottom: 15px;
-                color: #333;
+                margin-bottom: 8px;
+                color: #1d1d1f;
             }
-            .stat {
-                display: flex;
-                justify-content: space-between;
-                margin: 10px 0;
-                padding: 8px 0;
-                border-bottom: 1px solid #eee;
+
+            .stat-card-cost {
+                font-size: 14px;
+                color: #555;
             }
-            .stat-label {
-                color: #666;
+
+            .stat-card-count {
+                font-size: 12px;
+                color: #a1a1a6;
+                margin-top: 8px;
             }
-            .stat-value {
+
+            .color-electric { border-top: 3px solid #007AFF; }
+            .color-gas { border-top: 3px solid #FF9500; }
+            .color-car { border-top: 3px solid #34C759; }
+
+            .section {
+                margin-bottom: 24px;
+            }
+
+            .section-title {
+                font-size: 17px;
                 font-weight: 600;
-                color: #333;
+                margin-bottom: 12px;
+                color: #1d1d1f;
+                margin-top: 20px;
             }
-            .table-container {
+
+            .form-card {
                 background: white;
                 border-radius: 12px;
-                padding: 25px;
-                box-shadow: 0 8px 32px rgba(0,0,0,0.1);
-                margin-bottom: 20px;
+                padding: 20px;
+                box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+                margin-bottom: 16px;
             }
+
+            .form-inline {
+                display: grid;
+                grid-template-columns: 1fr 1fr auto;
+                gap: 12px;
+                align-items: flex-end;
+            }
+
+            @media (max-width: 600px) {
+                .form-inline {
+                    grid-template-columns: 1fr;
+                }
+            }
+
+            input {
+                padding: 12px;
+                border: 1px solid #e5e5e7;
+                border-radius: 8px;
+                font-size: 16px;
+                font-family: inherit;
+                transition: border-color 0.2s;
+            }
+
+            input:focus {
+                outline: none;
+                border-color: #007AFF;
+                box-shadow: 0 0 0 3px rgba(0,122,255,0.1);
+            }
+
+            button {
+                padding: 12px 24px;
+                background: #007AFF;
+                color: white;
+                border: none;
+                border-radius: 8px;
+                font-size: 15px;
+                font-weight: 600;
+                cursor: pointer;
+                transition: all 0.2s;
+            }
+
+            button:active {
+                background: #0051D5;
+                transform: scale(0.96);
+            }
+
+            button:hover {
+                background: #0051D5;
+            }
+
+            .tarif-info {
+                font-size: 12px;
+                color: #86868b;
+                margin-top: 8px;
+            }
+
+            .success {
+                background: #34C759;
+                color: white;
+                padding: 12px 16px;
+                border-radius: 8px;
+                margin-bottom: 12px;
+                display: none;
+                font-size: 14px;
+                font-weight: 500;
+            }
+
+            .chart-container {
+                background: white;
+                border-radius: 12px;
+                padding: 20px;
+                box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+                margin-bottom: 16px;
+                position: relative;
+                height: 300px;
+            }
+
+            @media (max-width: 600px) {
+                .chart-container {
+                    height: 250px;
+                }
+            }
+
+            .chart-title {
+                font-size: 15px;
+                font-weight: 600;
+                margin-bottom: 16px;
+                color: #1d1d1f;
+            }
+
+            .data-table {
+                background: white;
+                border-radius: 12px;
+                box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+                overflow: hidden;
+            }
+
             table {
                 width: 100%;
                 border-collapse: collapse;
             }
-            th, td {
-                padding: 12px;
-                text-align: left;
-                border-bottom: 1px solid #eee;
-            }
+
             th {
-                background: #f8f9fa;
+                background: #f5f5f7;
+                padding: 12px 16px;
+                text-align: left;
+                font-size: 13px;
                 font-weight: 600;
-                color: #333;
+                color: #555;
+                text-transform: uppercase;
+                letter-spacing: 0.3px;
+                border-bottom: 1px solid #e5e5e7;
             }
+
+            td {
+                padding: 12px 16px;
+                border-bottom: 1px solid #f0f0f0;
+                font-size: 14px;
+            }
+
+            tr:last-child td {
+                border-bottom: none;
+            }
+
             tr:hover {
-                background: #f8f9fa;
+                background: #fafafa;
             }
-            .form-inline {
-                display: grid;
-                grid-template-columns: 2fr 1fr auto;
-                gap: 15px;
-                align-items: end;
+
+            .footer {
+                text-align: center;
+                color: #86868b;
+                font-size: 12px;
+                padding: 40px 0;
+                margin-top: 20px;
             }
-            input {
-                padding: 10px;
-                border-radius: 6px;
-                border: 1px solid #ddd;
-                font-size: 1em;
-            }
-            button {
-                padding: 10px 20px;
-                border-radius: 6px;
-                border: none;
-                background: #667eea;
-                color: white;
-                cursor: pointer;
-                font-weight: 600;
-            }
-            button:hover {
-                background: #5568d3;
-            }
-            .chart-container {
-                background: white;
-                border-radius: 12px;
-                padding: 25px;
-                box-shadow: 0 8px 32px rgba(0,0,0,0.1);
-                margin-bottom: 20px;
-                position: relative;
-                height: 400px;
-            }
-            .success {
-                background: #4caf50;
-                color: white;
-                padding: 12px 15px;
-                border-radius: 6px;
-                margin-bottom: 15px;
-                display: none;
-            }
-            .tarif-info {
-                font-size: 0.9em;
-                color: #666;
-                margin-top: 8px;
+
+            @media (max-width: 600px) {
+                .container {
+                    padding: 0 12px;
+                }
+
+                .header {
+                    padding: 24px 0 16px;
+                }
+
+                .header h1 {
+                    font-size: 28px;
+                }
+
+                .stats-grid {
+                    grid-template-columns: 1fr;
+                    gap: 12px;
+                }
+
+                .form-inline {
+                    grid-template-columns: 1fr;
+                }
+
+                .section-title {
+                    font-size: 16px;
+                }
+
+                table {
+                    font-size: 13px;
+                }
+
+                th, td {
+                    padding: 10px 12px;
+                }
             }
         </style>
     </head>
     <body>
         <div class="container">
             <div class="header">
-                <h1>📊 Consommation Maison</h1>
-                <p>Tableau de bord énergie - Tarifs Engie réglementés</p>
-                <p style="font-size: 0.9em; margin-top: 10px;">Mis à jour: """ + datetime.now().strftime("%Y-%m-%d %H:%M:%S") + """</p>
+                <h1>Consommation</h1>
+                <p>Tableau de bord énergie maison</p>
             </div>
 
-            <div class="grid">
-                <div class="card">
-                    <div class="card-title">⚡ Électricité</div>
-                    <div class="stat">
-                        <span class="stat-label">Total (kWh)</span>
-                        <span class="stat-value">""" + f"{linky_total:.2f}" + """</span>
-                    </div>
-                    <div class="stat">
-                        <span class="stat-label">Coût (€)</span>
-                        <span class="stat-value">""" + f"{linky_cost:.2f}" + """</span>
-                    </div>
-                    <div class="stat">
-                        <span class="stat-label">Enregistrements</span>
-                        <span class="stat-value">""" + str(len(linky_data)) + """</span>
-                    </div>
+            <div class="stats-grid">
+                <div class="stat-card color-electric">
+                    <div class="stat-card-title">⚡ Électricité</div>
+                    <div class="stat-card-value">""" + f"{linky_total:.0f}" + """</div>
+                    <div class="stat-card-cost">kWh • """ + f"{linky_cost:.2f}" + """€</div>
+                    <div class="stat-card-count">""" + str(len(linky_data)) + """ jours</div>
                 </div>
 
-                <div class="card">
-                    <div class="card-title">🔥 Gaz</div>
-                    <div class="stat">
-                        <span class="stat-label">Total (kWh)</span>
-                        <span class="stat-value">""" + f"{gas_total:.2f}" + """</span>
-                    </div>
-                    <div class="stat">
-                        <span class="stat-label">Coût (€)</span>
-                        <span class="stat-value">""" + f"{gas_cost:.2f}" + """</span>
-                    </div>
-                    <div class="stat">
-                        <span class="stat-label">Enregistrements</span>
-                        <span class="stat-value">""" + str(len(gas_data)) + """</span>
-                    </div>
+                <div class="stat-card color-gas">
+                    <div class="stat-card-title">🔥 Gaz</div>
+                    <div class="stat-card-value">""" + f"{gas_total:.0f}" + """</div>
+                    <div class="stat-card-cost">kWh • """ + f"{gas_cost:.2f}" + """€</div>
+                    <div class="stat-card-count">""" + str(len(gas_data)) + """ relevés</div>
                 </div>
 
-                <div class="card">
-                    <div class="card-title">🔋 Voiture (EV)</div>
-                    <div class="stat">
-                        <span class="stat-label">Total (kWh)</span>
-                        <span class="stat-value">""" + f"{car_total:.2f}" + """</span>
-                    </div>
-                    <div class="stat">
-                        <span class="stat-label">Coût (€)</span>
-                        <span class="stat-value">""" + f"{car_cost:.2f}" + """</span>
-                    </div>
-                    <div class="stat">
-                        <span class="stat-label">Enregistrements</span>
-                        <span class="stat-value">""" + str(len(car_data)) + """</span>
-                    </div>
+                <div class="stat-card color-car">
+                    <div class="stat-card-title">🔋 Voiture</div>
+                    <div class="stat-card-value">""" + f"{car_total:.0f}" + """</div>
+                    <div class="stat-card-cost">kWh • """ + f"{car_cost:.2f}" + """€</div>
+                    <div class="stat-card-count">""" + str(len(car_data)) + """ recharges</div>
                 </div>
             </div>
 
-            <!-- Saisie Gaz -->
-            <div class="table-container">
-                <h2 style="margin-bottom: 15px;">🔥 Ajouter Gaz</h2>
-                <div id="gas-success" class="success">✅ Entrée ajoutée!</div>
-                <form id="gas-form" onsubmit="submitForm(event, 'gas')" class="form-inline">
-                    <div>
+            <div class="section">
+                <div class="section-title">Ajouter des données</div>
+
+                <div class="form-card">
+                    <div style="font-weight: 600; margin-bottom: 12px;">🔥 Gaz</div>
+                    <div id="gas-success" class="success">✅ Entrée ajoutée</div>
+                    <form id="gas-form" onsubmit="submitForm(event, 'gas')" class="form-inline">
                         <input type="date" id="gas-date" required>
-                    </div>
-                    <div>
                         <input type="number" id="gas-kwh" placeholder="kWh" step="0.01" required>
-                    </div>
-                    <button type="submit">Ajouter</button>
-                </form>
-                <div class="tarif-info">💰 Tarif: """ + f"{TARIFS['gas']:.5f}" + """ €/kWh (Engie réglementé)</div>
-            </div>
+                        <button type="submit">Ajouter</button>
+                    </form>
+                    <div class="tarif-info">Tarif: 0.11548 €/kWh</div>
+                </div>
 
-            <!-- Saisie Voiture -->
-            <div class="table-container">
-                <h2 style="margin-bottom: 15px;">🔋 Ajouter Recharge EV</h2>
-                <div id="car-success" class="success">✅ Entrée ajoutée!</div>
-                <form id="car-form" onsubmit="submitForm(event, 'car')" class="form-inline">
-                    <div>
+                <div class="form-card">
+                    <div style="font-weight: 600; margin-bottom: 12px;">🔋 Recharge EV</div>
+                    <div id="car-success" class="success">✅ Entrée ajoutée</div>
+                    <form id="car-form" onsubmit="submitForm(event, 'car')" class="form-inline">
                         <input type="date" id="car-date" required>
-                    </div>
-                    <div>
                         <input type="number" id="car-kwh" placeholder="kWh" step="0.01" required>
-                    </div>
-                    <button type="submit">Ajouter</button>
-                </form>
-                <div class="tarif-info">💰 Tarif: """ + f"{TARIFS['car']:.5f}" + """ €/kWh (Moyenne)</div>
+                        <button type="submit">Ajouter</button>
+                    </form>
+                    <div class="tarif-info">Tarif: 0.20 €/kWh</div>
+                </div>
             </div>
 
-            <!-- Graphiques -->
-            <div class="table-container">
-                <h2 style="margin-bottom: 20px;">📈 Comparaison par mois</h2>
+            <div class="section">
+                <div class="section-title">Comparaison par mois</div>
+
                 <div class="chart-container">
+                    <div class="chart-title">⚡ Électricité</div>
                     <canvas id="linkyChart"></canvas>
                 </div>
+
                 <div class="chart-container">
+                    <div class="chart-title">🔥 Gaz</div>
                     <canvas id="gasChart"></canvas>
                 </div>
+
                 <div class="chart-container">
+                    <div class="chart-title">🔋 Voiture</div>
                     <canvas id="carChart"></canvas>
                 </div>
             </div>
 
-            <!-- Données récentes -->
-            <div class="table-container">
-                <h2 style="margin-bottom: 20px;">📋 Données Récentes</h2>
-
-                <h3 style="margin-top: 0; margin-bottom: 10px;">⚡ Électricité - Derniers 15 jours</h3>
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Date</th>
-                            <th>Consommation (kWh)</th>
-                            <th>Coût (€)</th>
-                        </tr>
-                    </thead>
-                    <tbody>
+            <div class="section">
+                <div class="section-title">Données récentes</div>
+                <div class="data-table">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Consommation</th>
+                                <th>Coût</th>
+                            </tr>
+                        </thead>
+                        <tbody>
     """
 
-    for d in reversed(linky_data[-15:]):
-        html += f"""
-                        <tr>
-                            <td>{d['date']}</td>
-                            <td>{d['val']:.2f}</td>
-                            <td>{d['cost']:.2f}</td>
-                        </tr>
-        """
+    for d in reversed(linky_data[-10:]):
+        html += f"<tr><td>{d['date']}</td><td>{d['val']:.1f} kWh</td><td>{d['cost']:.2f}€</td></tr>"
 
     html += """
-                    </tbody>
-                </table>
+                        </tbody>
+                    </table>
+                </div>
             </div>
 
-            <div style="text-align: center; color: #999; font-size: 0.9em; margin-top: 30px; margin-bottom: 30px;">
-                <p>🗄️ Données SQLite | Tarifs Engie réglementés appliqués automatiquement</p>
+            <div class="footer">
+                Données en temps réel • Mis à jour """ + datetime.now().strftime("%H:%M") + """
             </div>
         </div>
 
         <script>
-            // Set today's date
             document.getElementById('gas-date').valueAsDate = new Date();
             document.getElementById('car-date').valueAsDate = new Date();
 
@@ -472,20 +546,16 @@ def index():
                     document.getElementById(type + '-form').reset();
                     document.getElementById(type + '-date').valueAsDate = new Date();
                     setTimeout(() => location.reload(), 1500);
-                } else {
-                    alert('Erreur');
                 }
             }
 
             function createChart(canvasId, data, title) {
                 const ctx = document.getElementById(canvasId).getContext('2d');
                 const months = ['Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Jun', 'Jul', 'Aoû', 'Sep', 'Oct', 'Nov', 'Déc'];
-                const colors = ['#FF6384', '#36A2EB', '#FFCE56', '#4BC0C0', '#9966FF', '#FF9F40'];
+                const colors = ['#007AFF', '#FF9500', '#34C759', '#FF3B30', '#5856D6'];
 
                 const datasets = [];
                 let colorIndex = 0;
-
-                // Sort years descending
                 const sortedYears = Object.keys(data).sort().reverse();
 
                 for (const year of sortedYears) {
@@ -500,10 +570,12 @@ def index():
                         label: year,
                         data: values,
                         borderColor: colors[colorIndex % colors.length],
-                        backgroundColor: colors[colorIndex % colors.length] + '33',
+                        backgroundColor: colors[colorIndex % colors.length] + '20',
                         borderWidth: 2,
                         tension: 0.3,
-                        fill: true
+                        fill: true,
+                        pointRadius: 3,
+                        pointBackgroundColor: colors[colorIndex % colors.length]
                     });
                     colorIndex++;
                 }
@@ -516,10 +588,10 @@ def index():
                         maintainAspectRatio: false,
                         interaction: {mode: 'index', intersect: false},
                         plugins: {
-                            legend: {position: 'top'},
-                            title: {display: true, text: title}
+                            legend: {position: 'top', labels: {padding: 15, font: {size: 12}}},
+                            filler: {propagate: true}
                         },
-                        scales: {y: {beginAtZero: true}}
+                        scales: {y: {beginAtZero: true, grid: {drawBorder: false, color: '#f0f0f0'}}}
                     }
                 });
             }
@@ -528,9 +600,9 @@ def index():
             const gasMonths = """ + json.dumps(gas_months) + """;
             const carMonths = """ + json.dumps(car_months) + """;
 
-            createChart('linkyChart', linkyMonths, '⚡ Électricité - Comparaison mensuelle');
-            createChart('gasChart', gasMonths, '🔥 Gaz - Comparaison mensuelle');
-            createChart('carChart', carMonths, '🔋 Voiture - Comparaison mensuelle');
+            createChart('linkyChart', linkyMonths, 'Électricité');
+            createChart('gasChart', gasMonths, 'Gaz');
+            createChart('carChart', carMonths, 'Voiture');
         </script>
     </body>
     </html>
@@ -540,19 +612,12 @@ def index():
 
 @app.route('/add_entry', methods=['POST'])
 def add_entry():
-    """Add manual entry to database"""
     data = request.json
-    success = insert_manual_entry(
-        table=data['table'],
-        date_str=data['date'],
-        kwh=data['kwh']
-    )
-
+    success = insert_manual_entry(data['table'], data['date'], data['kwh'])
     return jsonify({'status': 'ok' if success else 'error'}), (200 if success else 500)
 
 @app.route('/health')
 def health():
-    """Health check endpoint"""
     conn = get_db_connection()
     if conn:
         conn.close()
@@ -560,7 +625,5 @@ def health():
     return jsonify({'status': 'error'}), 500
 
 if __name__ == '__main__':
-    print("🚀 Energy Dashboard v4 (Simple Forms + Year Comparison)")
-    print(f"📁 Database: {DB_PATH}")
-    print("🌐 Access at: http://localhost:5000")
+    print("🚀 Energy Dashboard v5 (Apple Design + Mobile Responsive)")
     app.run(host='0.0.0.0', port=5000, debug=False)
