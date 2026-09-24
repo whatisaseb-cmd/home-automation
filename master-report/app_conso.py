@@ -13,8 +13,9 @@ app = Flask(__name__)
 
 DB_PATH = os.path.expanduser('~/data/maison.db')
 TARIFS = {
-    'gas': 0.11548,
-    'car': 0.20
+    'linky': 0.1740,  # Engie 9kVA heures creuses
+    'gas': 0.11548,   # Engie gaz
+    'car': 0.1740     # EV charging at home (HC rate)
 }
 
 def get_db_connection():
@@ -464,7 +465,7 @@ def index():
                         <input type="number" id="gas-kwh" placeholder="kWh" step="0.01" required>
                         <button type="submit">Ajouter</button>
                     </form>
-                    <div class="tarif-info">Tarif: 0.11548 €/kWh</div>
+                    <div class="tarif-info">Tarif: 0.11548 €/kWh (Engie)</div>
                 </div>
 
                 <div class="form-card">
@@ -475,7 +476,7 @@ def index():
                         <input type="number" id="car-kwh" placeholder="kWh" step="0.01" required>
                         <button type="submit">Ajouter</button>
                     </form>
-                    <div class="tarif-info">Tarif: 0.20 €/kWh</div>
+                    <div class="tarif-info">Tarif: 0.1740 €/kWh (HC)</div>
                 </div>
             </div>
 
