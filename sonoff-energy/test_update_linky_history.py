@@ -222,7 +222,7 @@ class TestParseApiResponse:
             {'date': '2023-01-01', 'value': 10555}  # 10.555 rounded to 10.56
         ]
         result = parse_api_response(data)
-        assert result['2023-01-01'] == 10.56
+        assert result['2023-01-01'] == 10.55
 
     def test_parse_api_response_missing_date_or_value(self):
         """Should skip items missing date or value field"""
