@@ -1,21 +1,23 @@
 #!/usr/bin/env python3
 """
-Energy Consumption Dashboard - Apple Design + Mobile Responsive
+Energy Consumption Dashboard v6 - Latest entries + Download CSV
 """
 
 import os
 import sqlite3
 import json
+import csv
+from io import StringIO
 from datetime import datetime, timedelta
-from flask import Flask, render_template_string, request, jsonify
+from flask import Flask, render_template_string, request, jsonify, send_file
 
 app = Flask(__name__)
 
 DB_PATH = os.path.expanduser('~/data/maison.db')
 TARIFS = {
-    'linky': 0.1740,  # Engie 9kVA heures creuses
-    'gas': 0.11548,   # Engie gaz
-    'car': 0.1740     # EV charging at home (HC rate)
+    'linky': 0.1740,
+    'gas': 0.11548,
+    'car': 0.1740
 }
 
 def get_db_connection():
@@ -122,6 +124,10 @@ def index():
     gas_cost = sum(d['cost'] for d in gas_data) if gas_data else 0
     car_total = sum(d['val'] for d in car_data) if car_data else 0
     car_cost = sum(d['cost'] for d in car_data) if car_data else 0
+
+    # Get last 5 entries
+    last_gas = list(reversed(gas_data[-5:]))
+    last_car = list(reversed(car_data[-5:]))
 
     linky_months = get_monthly_data('linky')
     gas_months = get_monthly_data('gas')
@@ -302,6 +308,16 @@ def index():
                 background: #0051D5;
             }
 
+            .download-btn {
+                background: #34C759;
+                padding: 8px 16px;
+                font-size: 14px;
+            }
+
+            .download-btn:hover {
+                background: #2d9e4d;
+            }
+
             .tarif-info {
                 font-size: 12px;
                 color: #86868b;
@@ -342,42 +358,48 @@ def index():
                 color: #1d1d1f;
             }
 
-            .data-table {
+            .recent-entries {
                 background: white;
                 border-radius: 12px;
+                padding: 20px;
                 box-shadow: 0 1px 3px rgba(0,0,0,0.08);
-                overflow: hidden;
+                margin-bottom: 16px;
             }
 
-            table {
-                width: 100%;
-                border-collapse: collapse;
-            }
-
-            th {
-                background: #f5f5f7;
-                padding: 12px 16px;
-                text-align: left;
-                font-size: 13px;
+            .recent-entries-title {
+                font-size: 15px;
                 font-weight: 600;
-                color: #555;
-                text-transform: uppercase;
-                letter-spacing: 0.3px;
-                border-bottom: 1px solid #e5e5e7;
+                margin-bottom: 12px;
+                color: #1d1d1f;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
             }
 
-            td {
-                padding: 12px 16px;
+            .entry-list {
+                list-style: none;
+            }
+
+            .entry-item {
+                padding: 10px 0;
                 border-bottom: 1px solid #f0f0f0;
+                display: flex;
+                justify-content: space-between;
                 font-size: 14px;
             }
 
-            tr:last-child td {
+            .entry-item:last-child {
                 border-bottom: none;
             }
 
-            tr:hover {
-                background: #fafafa;
+            .entry-date {
+                color: #555;
+                font-weight: 500;
+            }
+
+            .entry-value {
+                color: #1d1d1f;
+                font-weight: 600;
             }
 
             .footer {
@@ -413,14 +435,6 @@ def index():
                 .section-title {
                     font-size: 16px;
                 }
-
-                table {
-                    font-size: 13px;
-                }
-
-                th, td {
-                    padding: 10px 12px;
-                }
             }
         </style>
     </head>
@@ -455,6 +469,56 @@ def index():
             </div>
 
             <div class="section">
+                <div class="section-title">Derniers relevés</div>
+
+                <div class="recent-entries">
+                    <div class="recent-entries-title">
+                        🔥 Gaz
+                        <button class="download-btn" onclick="downloadCSV('gas')">📥 CSV</button>
+                    </div>
+                    <ul class="entry-list">
+    """
+
+    if last_gas:
+        for entry in last_gas:
+            html += f"""
+                        <li class="entry-item">
+                            <span class="entry-date">{entry['date']}</span>
+                            <span class="entry-value">{entry['val']:.2f} kWh • {entry['cost']:.2f}€</span>
+                        </li>
+            """
+    else:
+        html += '<li class="entry-item"><span style="color: #a1a1a6;">Aucun relevé</span></li>'
+
+    html += """
+                    </ul>
+                </div>
+
+                <div class="recent-entries">
+                    <div class="recent-entries-title">
+                        🔋 Voiture
+                        <button class="download-btn" onclick="downloadCSV('car')">📥 CSV</button>
+                    </div>
+                    <ul class="entry-list">
+    """
+
+    if last_car:
+        for entry in last_car:
+            html += f"""
+                        <li class="entry-item">
+                            <span class="entry-date">{entry['date']}</span>
+                            <span class="entry-value">{entry['val']:.2f} kWh • {entry['cost']:.2f}€</span>
+                        </li>
+            """
+    else:
+        html += '<li class="entry-item"><span style="color: #a1a1a6;">Aucun relevé</span></li>'
+
+    html += """
+                    </ul>
+                </div>
+            </div>
+
+            <div class="section">
                 <div class="section-title">Ajouter des données</div>
 
                 <div class="form-card">
@@ -465,7 +529,7 @@ def index():
                         <input type="number" id="gas-kwh" placeholder="kWh" step="0.01" required>
                         <button type="submit">Ajouter</button>
                     </form>
-                    <div class="tarif-info">Tarif: 0.11548 €/kWh (Engie)</div>
+                    <div class="tarif-info">Tarif: 0.11548 €/kWh</div>
                 </div>
 
                 <div class="form-card">
@@ -499,29 +563,6 @@ def index():
                 </div>
             </div>
 
-            <div class="section">
-                <div class="section-title">Données récentes</div>
-                <div class="data-table">
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Date</th>
-                                <th>Consommation</th>
-                                <th>Coût</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-    """
-
-    for d in reversed(linky_data[-10:]):
-        html += f"<tr><td>{d['date']}</td><td>{d['val']:.1f} kWh</td><td>{d['cost']:.2f}€</td></tr>"
-
-    html += """
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-
             <div class="footer">
                 Données en temps réel • Mis à jour """ + datetime.now().strftime("%H:%M") + """
             </div>
@@ -548,6 +589,10 @@ def index():
                     document.getElementById(type + '-date').valueAsDate = new Date();
                     setTimeout(() => location.reload(), 1500);
                 }
+            }
+
+            function downloadCSV(type) {
+                window.location.href = '/download/' + type;
             }
 
             function createChart(canvasId, data, title) {
@@ -617,6 +662,39 @@ def add_entry():
     success = insert_manual_entry(data['table'], data['date'], data['kwh'])
     return jsonify({'status': 'ok' if success else 'error'}), (200 if success else 500)
 
+@app.route('/download/<table>')
+def download_csv(table):
+    """Download data as CSV"""
+    if table not in ['linky', 'gas', 'car']:
+        return "Invalid table", 400
+
+    conn = get_db_connection()
+    if not conn:
+        return "Database error", 500
+
+    try:
+        cursor = conn.cursor()
+        cursor.execute(f"SELECT date, kwh, cost FROM {table} ORDER BY date")
+        rows = cursor.fetchall()
+        conn.close()
+
+        # Create CSV
+        output = StringIO()
+        writer = csv.writer(output)
+        writer.writerow(['Date', 'kWh', 'Coût (€)'])
+        for row in rows:
+            writer.writerow([row['date'], f"{row['kwh']:.2f}", f"{row['cost']:.2f}"])
+
+        # Return as file
+        return send_file(
+            StringIO(output.getvalue()),
+            mimetype='text/csv',
+            as_attachment=True,
+            download_name=f'{table}_{datetime.now().strftime("%Y%m%d")}.csv'
+        )
+    except Exception as e:
+        return f"Error: {str(e)}", 500
+
 @app.route('/health')
 def health():
     conn = get_db_connection()
@@ -626,5 +704,5 @@ def health():
     return jsonify({'status': 'error'}), 500
 
 if __name__ == '__main__':
-    print("🚀 Energy Dashboard v5 (Apple Design + Mobile Responsive)")
+    print("🚀 Energy Dashboard v6 (Latest entries + CSV Export)")
     app.run(host='0.0.0.0', port=5000, debug=False)
