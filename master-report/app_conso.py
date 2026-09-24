@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
-Energy Consumption Dashboard - SQLite Version with Charts & Manual Entry
-Reads from ~/data/maison.db for Linky (electricity) and Gas data
+Energy Consumption Dashboard - SQLite Version with Simple Forms & Charts
+Réglementé Engie tariffs auto-calculated
 """
 
 import os
 import sqlite3
 import json
 from datetime import datetime, timedelta
-from flask import Flask, render_template_string, request, redirect, url_for, jsonify
+from flask import Flask, render_template_string, request, jsonify
 
 app = Flask(__name__)
 
@@ -17,6 +17,14 @@ DB_PATH = os.path.expanduser('~/data/maison.db')
 LOGS_DIR = os.path.expanduser('~/logs')
 
 os.makedirs(LOGS_DIR, exist_ok=True)
+
+# Tarifs réglementés Engie (€/kWh)
+TARIFS = {
+    'linky_hc': 0.16039,  # Heures creuses
+    'linky_hp': 0.19209,  # Heures pleines
+    'gas': 0.11548,        # Gaz
+    'car': 0.20            # EV charging average
+}
 
 def get_db_connection():
     """Connect to SQLite database"""
@@ -82,8 +90,8 @@ def load_car_data(limit=365):
         conn.close()
         return []
 
-def insert_manual_entry(table, date_str, kwh, cost=None):
-    """Insert or update manual entry in SQLite"""
+def insert_manual_entry(table, date_str, kwh):
+    """Insert or update manual entry in SQLite with auto-calculated cost"""
     conn = get_db_connection()
     if not conn:
         return False
@@ -91,20 +99,19 @@ def insert_manual_entry(table, date_str, kwh, cost=None):
     try:
         cursor = conn.cursor()
 
-        # Calculate cost if not provided
-        if cost is None:
-            if table == 'gas':
-                cost = kwh * 0.11548
-            elif table == 'car':
-                cost = kwh * 0.20
-            else:
-                cost = kwh * 0.19
+        # Auto-calculate cost based on tarif
+        if table == 'gas':
+            cost = float(kwh) * TARIFS['gas']
+        elif table == 'car':
+            cost = float(kwh) * TARIFS['car']
+        else:  # linky
+            cost = float(kwh) * TARIFS['linky_hc']
 
         # Insert or replace
         cursor.execute(f"""
             INSERT OR REPLACE INTO {table} (date, kwh, cost)
             VALUES (?, ?, ?)
-        """, (date_str, float(kwh), float(cost)))
+        """, (date_str, float(kwh), round(cost, 4)))
 
         conn.commit()
         conn.close()
@@ -115,8 +122,8 @@ def insert_manual_entry(table, date_str, kwh, cost=None):
             conn.close()
         return False
 
-def get_year_comparison(table):
-    """Get data grouped by month for year comparison"""
+def get_monthly_data(table):
+    """Get data grouped by month (all years)"""
     conn = get_db_connection()
     if not conn:
         return {}
@@ -127,8 +134,7 @@ def get_year_comparison(table):
             SELECT
                 strftime('%Y', date) as year,
                 strftime('%m', date) as month,
-                SUM(kwh) as total_kwh,
-                SUM(cost) as total_cost
+                SUM(kwh) as total_kwh
             FROM {table}
             GROUP BY year, month
             ORDER BY year DESC, month
@@ -144,12 +150,13 @@ def get_year_comparison(table):
             month = row['month']
             if year not in years:
                 years[year] = {}
-            years[year][month] = {'kwh': row['total_kwh'], 'cost': row['total_cost']}
+            years[year][month] = float(row['total_kwh']) if row['total_kwh'] else 0
 
         return years
     except Exception as e:
-        print(f"❌ Error getting comparison: {e}")
-        conn.close()
+        print(f"❌ Error getting monthly data: {e}")
+        if conn:
+            conn.close()
         return {}
 
 @app.route('/')
@@ -167,10 +174,10 @@ def index():
     car_total = sum(d['val'] for d in car_data) if car_data else 0
     car_cost = sum(d['cost'] for d in car_data) if car_data else 0
 
-    # Get year comparisons
-    linky_years = get_year_comparison('linky')
-    gas_years = get_year_comparison('gas')
-    car_years = get_year_comparison('car')
+    # Get monthly data for charts
+    linky_months = get_monthly_data('linky')
+    gas_months = get_monthly_data('gas')
+    car_months = get_monthly_data('car')
 
     html = """
     <!DOCTYPE html>
@@ -257,17 +264,13 @@ def index():
             tr:hover {
                 background: #f8f9fa;
             }
-            .form-group {
-                margin-bottom: 15px;
-            }
-            label {
-                display: block;
-                margin-bottom: 5px;
-                font-weight: 600;
-                color: #333;
+            .form-inline {
+                display: grid;
+                grid-template-columns: 2fr 1fr auto;
+                gap: 15px;
+                align-items: end;
             }
             input {
-                width: 100%;
                 padding: 10px;
                 border-radius: 6px;
                 border: 1px solid #ddd;
@@ -285,18 +288,6 @@ def index():
             button:hover {
                 background: #5568d3;
             }
-            .form-section {
-                margin-bottom: 30px;
-            }
-            .badge {
-                display: inline-block;
-                padding: 4px 12px;
-                border-radius: 20px;
-                font-size: 0.85em;
-                font-weight: 500;
-                background: #e3f2fd;
-                color: #1976d2;
-            }
             .chart-container {
                 background: white;
                 border-radius: 12px;
@@ -309,10 +300,15 @@ def index():
             .success {
                 background: #4caf50;
                 color: white;
-                padding: 10px 15px;
+                padding: 12px 15px;
                 border-radius: 6px;
-                margin-bottom: 10px;
+                margin-bottom: 15px;
                 display: none;
+            }
+            .tarif-info {
+                font-size: 0.9em;
+                color: #666;
+                margin-top: 8px;
             }
         </style>
     </head>
@@ -320,7 +316,7 @@ def index():
         <div class="container">
             <div class="header">
                 <h1>📊 Consommation Maison</h1>
-                <p>Tableau de bord énergie - SQLite + Saisie manuelle</p>
+                <p>Tableau de bord énergie - Tarifs Engie réglementés</p>
                 <p style="font-size: 0.9em; margin-top: 10px;">Mis à jour: """ + datetime.now().strftime("%Y-%m-%d %H:%M:%S") + """</p>
             </div>
 
@@ -374,73 +370,57 @@ def index():
                 </div>
             </div>
 
-            <!-- Saisie manuelle Gaz -->
-            <div class="table-container form-section">
-                <h2 style="margin-bottom: 20px;">➕ Ajouter une entrée Gaz</h2>
-                <div id="gas-success" class="success">✅ Entrée gaz ajoutée avec succès!</div>
-                <form id="gas-form" onsubmit="submitForm(event, 'gas')" style="display: grid; grid-template-columns: 1fr 1fr 1fr auto; gap: 10px; align-items: end;">
+            <!-- Saisie Gaz -->
+            <div class="table-container">
+                <h2 style="margin-bottom: 15px;">🔥 Ajouter Gaz</h2>
+                <div id="gas-success" class="success">✅ Entrée ajoutée!</div>
+                <form id="gas-form" onsubmit="submitForm(event, 'gas')" class="form-inline">
                     <div>
-                        <label>Date</label>
                         <input type="date" id="gas-date" required>
                     </div>
                     <div>
-                        <label>Consommation (kWh)</label>
-                        <input type="number" id="gas-kwh" step="0.01" required>
-                    </div>
-                    <div>
-                        <label>Coût (€) - Optionnel</label>
-                        <input type="number" id="gas-cost" step="0.01">
+                        <input type="number" id="gas-kwh" placeholder="kWh" step="0.01" required>
                     </div>
                     <button type="submit">Ajouter</button>
                 </form>
+                <div class="tarif-info">💰 Tarif: """ + f"{TARIFS['gas']:.5f}" + """ €/kWh (Engie réglementé)</div>
             </div>
 
-            <!-- Saisie manuelle Voiture -->
-            <div class="table-container form-section">
-                <h2 style="margin-bottom: 20px;">➕ Ajouter une entrée Voiture (EV)</h2>
-                <div id="car-success" class="success">✅ Entrée voiture ajoutée avec succès!</div>
-                <form id="car-form" onsubmit="submitForm(event, 'car')" style="display: grid; grid-template-columns: 1fr 1fr 1fr auto; gap: 10px; align-items: end;">
+            <!-- Saisie Voiture -->
+            <div class="table-container">
+                <h2 style="margin-bottom: 15px;">🔋 Ajouter Recharge EV</h2>
+                <div id="car-success" class="success">✅ Entrée ajoutée!</div>
+                <form id="car-form" onsubmit="submitForm(event, 'car')" class="form-inline">
                     <div>
-                        <label>Date</label>
                         <input type="date" id="car-date" required>
                     </div>
                     <div>
-                        <label>Recharge (kWh)</label>
-                        <input type="number" id="car-kwh" step="0.01" required>
-                    </div>
-                    <div>
-                        <label>Coût (€) - Optionnel</label>
-                        <input type="number" id="car-cost" step="0.01">
+                        <input type="number" id="car-kwh" placeholder="kWh" step="0.01" required>
                     </div>
                     <button type="submit">Ajouter</button>
                 </form>
+                <div class="tarif-info">💰 Tarif: """ + f"{TARIFS['car']:.5f}" + """ €/kWh (Moyenne)</div>
             </div>
 
-            <!-- Graphiques comparaison années -->
+            <!-- Graphiques -->
             <div class="table-container">
-                <h2 style="margin-bottom: 20px;">📈 Comparaison par mois (années antérieures)</h2>
+                <h2 style="margin-bottom: 20px;">📈 Comparaison par mois</h2>
                 <div class="chart-container">
                     <canvas id="linkyChart"></canvas>
                 </div>
-            </div>
-
-            <div class="table-container">
                 <div class="chart-container">
                     <canvas id="gasChart"></canvas>
                 </div>
-            </div>
-
-            <div class="table-container">
                 <div class="chart-container">
                     <canvas id="carChart"></canvas>
                 </div>
             </div>
 
-            <!-- Tableau dernières données -->
+            <!-- Données récentes -->
             <div class="table-container">
                 <h2 style="margin-bottom: 20px;">📋 Données Récentes</h2>
 
-                <h3 style="margin-top: 20px; margin-bottom: 10px;">⚡ Électricité (Linky) - Derniers 15 jours</h3>
+                <h3 style="margin-top: 0; margin-bottom: 10px;">⚡ Électricité - Derniers 15 jours</h3>
                 <table>
                     <thead>
                         <tr>
@@ -467,64 +447,53 @@ def index():
             </div>
 
             <div style="text-align: center; color: #999; font-size: 0.9em; margin-top: 30px; margin-bottom: 30px;">
-                <p>🗄️ Données provenant de ~/data/maison.db (SQLite)</p>
-                <p>Linky API updates: Chaque jour à 2h | Saisie manuelle en temps réel</p>
+                <p>🗄️ Données SQLite | Tarifs Engie réglementés appliqués automatiquement</p>
             </div>
         </div>
 
         <script>
-            // Set today's date as default
+            // Set today's date
             document.getElementById('gas-date').valueAsDate = new Date();
             document.getElementById('car-date').valueAsDate = new Date();
 
             async function submitForm(event, type) {
                 event.preventDefault();
-                const dateInput = document.getElementById(type + '-date').value;
-                const kwhInput = document.getElementById(type + '-kwh').value;
-                const costInput = document.getElementById(type + '-cost').value;
+                const date = document.getElementById(type + '-date').value;
+                const kwh = document.getElementById(type + '-kwh').value;
 
                 const response = await fetch('/add_entry', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({
-                        table: type,
-                        date: dateInput,
-                        kwh: kwhInput,
-                        cost: costInput || null
-                    })
+                    body: JSON.stringify({table: type, date: date, kwh: kwh})
                 });
 
                 if (response.ok) {
                     document.getElementById(type + '-success').style.display = 'block';
                     document.getElementById(type + '-form').reset();
                     document.getElementById(type + '-date').valueAsDate = new Date();
-                    setTimeout(() => {
-                        document.getElementById(type + '-success').style.display = 'none';
-                        location.reload();
-                    }, 2000);
+                    setTimeout(() => location.reload(), 1500);
                 } else {
-                    alert('Erreur lors de l\'ajout de l\'entrée');
+                    alert('Erreur');
                 }
             }
 
-            // Charts
-            const linkyYears = """ + json.dumps(linky_years) + """;
-            const gasYears = """ + json.dumps(gas_years) + """;
-            const carYears = """ + json.dumps(car_years) + """;
-
-            function createChart(canvasId, data, label) {
+            function createChart(canvasId, data, title) {
                 const ctx = document.getElementById(canvasId).getContext('2d');
                 const months = ['Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Jun', 'Jul', 'Aoû', 'Sep', 'Oct', 'Nov', 'Déc'];
-                const colors = ['#FF6384', '#36A2EB', '#FFCE56', '#4BC0C0', '#9966FF'];
+                const colors = ['#FF6384', '#36A2EB', '#FFCE56', '#4BC0C0', '#9966FF', '#FF9F40'];
 
                 const datasets = [];
                 let colorIndex = 0;
 
-                for (const [year, monthData] of Object.entries(data)) {
+                // Sort years descending
+                const sortedYears = Object.keys(data).sort().reverse();
+
+                for (const year of sortedYears) {
+                    const monthData = data[year];
                     const values = [];
                     for (let m = 1; m <= 12; m++) {
                         const month = String(m).padStart(2, '0');
-                        values.push(monthData[month]?.kwh || 0);
+                        values.push(monthData[month] || 0);
                     }
 
                     datasets.push({
@@ -533,37 +502,35 @@ def index():
                         borderColor: colors[colorIndex % colors.length],
                         backgroundColor: colors[colorIndex % colors.length] + '33',
                         borderWidth: 2,
-                        tension: 0.3
+                        tension: 0.3,
+                        fill: true
                     });
                     colorIndex++;
                 }
 
                 new Chart(ctx, {
                     type: 'line',
-                    data: {
-                        labels: months,
-                        datasets: datasets
-                    },
+                    data: {labels: months, datasets: datasets},
                     options: {
                         responsive: true,
                         maintainAspectRatio: false,
+                        interaction: {mode: 'index', intersect: false},
                         plugins: {
-                            legend: {
-                                position: 'top'
-                            }
+                            legend: {position: 'top'},
+                            title: {display: true, text: title}
                         },
-                        scales: {
-                            y: {
-                                beginAtZero: true
-                            }
-                        }
+                        scales: {y: {beginAtZero: true}}
                     }
                 });
             }
 
-            createChart('linkyChart', linkyYears, '⚡ Électricité - Comparaison années');
-            createChart('gasChart', gasYears, '🔥 Gaz - Comparaison années');
-            createChart('carChart', carYears, '🔋 Voiture - Comparaison années');
+            const linkyMonths = """ + json.dumps(linky_months) + """;
+            const gasMonths = """ + json.dumps(gas_months) + """;
+            const carMonths = """ + json.dumps(car_months) + """;
+
+            createChart('linkyChart', linkyMonths, '⚡ Électricité - Comparaison mensuelle');
+            createChart('gasChart', gasMonths, '🔥 Gaz - Comparaison mensuelle');
+            createChart('carChart', carMonths, '🔋 Voiture - Comparaison mensuelle');
         </script>
     </body>
     </html>
@@ -575,18 +542,13 @@ def index():
 def add_entry():
     """Add manual entry to database"""
     data = request.json
-
     success = insert_manual_entry(
         table=data['table'],
         date_str=data['date'],
-        kwh=data['kwh'],
-        cost=data['cost']
+        kwh=data['kwh']
     )
 
-    if success:
-        return jsonify({'status': 'ok'}), 200
-    else:
-        return jsonify({'status': 'error'}), 500
+    return jsonify({'status': 'ok' if success else 'error'}), (200 if success else 500)
 
 @app.route('/health')
 def health():
@@ -594,12 +556,11 @@ def health():
     conn = get_db_connection()
     if conn:
         conn.close()
-        return jsonify({'status': 'ok', 'database': 'sqlite'}), 200
-    else:
-        return jsonify({'status': 'error', 'database': 'sqlite'}), 500
+        return jsonify({'status': 'ok'}), 200
+    return jsonify({'status': 'error'}), 500
 
 if __name__ == '__main__':
-    print("🚀 Starting Energy Dashboard v3 (SQLite + Charts + Manual Entry)")
+    print("🚀 Energy Dashboard v4 (Simple Forms + Year Comparison)")
     print(f"📁 Database: {DB_PATH}")
     print("🌐 Access at: http://localhost:5000")
     app.run(host='0.0.0.0', port=5000, debug=False)
